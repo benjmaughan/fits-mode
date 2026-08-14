@@ -375,8 +375,6 @@ come close to it."
 (defvar-local fits--data-offset 0)
 (defvar-local fits--data-total 0)
 (defvar-local fits--data-kind nil)   ; 'table or 'image
-(defvar-local fits--data-header-base nil)
-
 (defvar fits-data-mode-map
   (let ((map (make-sparse-keymap)))
     (set-keymap-parent map tabulated-list-mode-map)
@@ -401,12 +399,48 @@ come close to it."
       (visual-line-mode -1))))
 
 (defun fits--data-header-line ()
-  "Render the `fits-data-mode' header adjusted for horizontal scroll."
-  (let* ((hscroll (window-hscroll))
-         (rendered (format-mode-line fits--data-header-base)))
-    (if (> hscroll 0)
-        (truncate-string-to-width rendered (string-width rendered) hscroll)
-      rendered)))
+  "Render the `fits-data-mode' header from `tabulated-list-format'.
+The rendered header tracks the current window's horizontal scroll
+using the same column widths, padding, and alignment metadata that
+`tabulated-list-mode' uses for data rows."
+  (let ((segments (list (make-string (max tabulated-list-padding 0) ?\s)))
+        (hscroll (window-hscroll))
+        (ncols (length tabulated-list-format))
+        rendered)
+    (dotimes (i ncols)
+      (let* ((col (aref tabulated-list-format i))
+             (label (format "%s" (or (nth 0 col) "")))
+             (width (nth 1 col))
+             (props (nthcdr 3 col))
+             (not-last-col (< i (1- ncols)))
+             (pad-right (if not-last-col
+                            (or (plist-get props :pad-right) 1)
+                          0))
+             (right-align (plist-get props :right-align))
+             (visible-label (if not-last-col
+                                (truncate-string-to-width label width)
+                              label))
+             (label-width (string-width visible-label))
+             (body (if right-align
+                       (concat (make-string (max 0 (- width label-width)) ?\s)
+                               visible-label)
+                     (concat visible-label
+                             (make-string (max 0 (- width label-width)) ?\s)))))
+        (push (concat body (make-string pad-right ?\s)) segments)))
+    (setq segments (nreverse segments))
+    (while segments
+      (let* ((segment (car segments))
+             (segment-width (string-width segment)))
+        (cond
+         ((>= hscroll segment-width)
+          (setq hscroll (- hscroll segment-width)))
+         ((> hscroll 0)
+          (push (truncate-string-to-width segment segment-width hscroll) rendered)
+          (setq hscroll 0))
+         (t
+          (push segment rendered))))
+      (setq segments (cdr segments)))
+    (apply #'concat (nreverse rendered))))
 
 (define-derived-mode fits-data-mode tabulated-list-mode "FITS-Data"
   "Major mode showing FITS table rows, or an image preview grid.
@@ -499,8 +533,8 @@ whose values all look numeric are right-aligned; width is capped at
     (setq tabulated-list-format (fits--data-compute-format cols str-rows))
     (tabulated-list-init-header)
     ;; Keep header names aligned with horizontally scrolled table content.
-    (setq fits--data-header-base header-line-format)
-    (setq header-line-format '(:eval (fits--data-header-line)))
+    (setq header-line-format
+          '(:eval (list "" 'header-line-indent (fits--data-header-line))))
     (setq tabulated-list-entries
           (let ((i fits--data-offset))
             (mapcar (lambda (row)
