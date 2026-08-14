@@ -74,6 +74,11 @@ header card values are always shown at full precision."
   :type 'integer
   :group 'fits-mode)
 
+(defcustom fits-mode-columns-name-width 24
+  "Maximum display width for FITS column names in `fits-columns-mode'."
+  :type 'integer
+  :group 'fits-mode)
+
 (defcustom fits-mode-data-max-column-width 40
   "Maximum width, in characters, of a single column in `fits-data-mode'.
 Columns are otherwise sized to fit their content on the current page, so
@@ -324,7 +329,7 @@ come close to it."
 
 \\{fits-columns-mode-map}"
   (setq tabulated-list-format
-        [("Name" 16 t) ("Format" 8 t) ("Unit" 10 t) ("Disp" 10 t)])
+        `[("Name" ,fits-mode-columns-name-width t) ("Format" 8 t) ("Unit" 10 t) ("Disp" 10 t)])
   (setq tabulated-list-padding 2)
   (setq buffer-read-only t)
   (setq revert-buffer-function (lambda (&rest _) (fits--columns-load)))
