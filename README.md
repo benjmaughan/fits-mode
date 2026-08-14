@@ -1,253 +1,142 @@
 # fits-mode
 
-An Emacs major mode for browsing [FITS](https://fits.gsfc.nasa.gov/) files — without loading the binary payload into a buffer.
+`fits-mode` is an Emacs major mode for browsing FITS files without inserting the raw binary payload into an editing buffer. It is useful when you want fast, read-only inspection of HDU metadata, headers, table schemas, and data from within Emacs.
 
-`fits-mode` provides a set of read-only, tabulated views for inspecting FITS HDUs, headers, table columns, and table/image data, all from within Emacs. It uses a small Python/[astropy](https://www.astropy.org/) helper script as the parsing back-end and communicates over JSON, so the Emacs side stays pure Elisp with no binary I/O.
+## Architecture
 
----
+`fits-mode` has two parts:
+
+- **Emacs Lisp front-end (`fits-mode.el`)**: provides the HDU/header/columns/data views using `tabulated-list-mode`, key-driven navigation, pagination, and refresh.
+- **Python helper (`fits-helper.py`)**: uses Astropy to read FITS content and returns JSON for the Elisp front-end.
+
+This split keeps FITS parsing in Astropy while keeping the Emacs side focused on rendering and interaction.
 
 ## Requirements
 
-| Dependency | Notes |
-|---|---|
-| Emacs | 29.1 or later recommended (uses `header-line-indent-mode`) |
-| Python 3 | `python3` on `PATH`, or set `fits-mode-python-executable` |
-| astropy | `pip install astropy` |
-
----
+- Emacs 27.1+
+- Python 3
+- `astropy` in the Python environment used by `fits-mode`
 
 ## Installation
 
-1. **Clone or copy** both `fits-mode.el` and `fits-helper.py` into the same directory on your `load-path`, for example `~/.emacs.d/lisp/fits-mode/`.
-
-2. **Install the Python dependency:**
+1. Put `fits-mode.el` and `fits-helper.py` in the same directory on your `load-path`.
+2. Install Astropy:
 
    ```sh
    pip install astropy
    ```
 
-3. **Load the package** in your Emacs configuration:
+3. Load `fits-mode`:
 
    ```elisp
-   ;; Minimal
    (add-to-list 'load-path "~/.emacs.d/lisp/fits-mode")
    (require 'fits-mode)
    ```
 
-   Or with `use-package`:
+`fits-mode` registers FITS filename handling automatically, so opening matching FITS files with `find-file` enters `fits-hdu-list-mode`.
 
-   ```elisp
-   (use-package fits-mode
-     :load-path "~/.emacs.d/lisp/fits-mode")
-   ```
+## Usage
 
-4. **That's it.** Opening any `.fits`, `.fit`, `.fits.gz`, or `.fits.fz` file with `find-file` will launch `fits-mode` automatically. The raw binary payload is never loaded into the buffer — only the rendered view.
+Open a FITS file with `find-file` or explicitly:
 
----
-
-## Opening a FITS file
-
+```elisp
+M-x fits-open-file
 ```
-M-x find-file RET my-data.fits RET
-```
-
-or
-
-```
-M-x fits-open-file RET my-data.fits RET
-```
-
-Either command opens the **HDU list** view.
-
----
-
-## Views
 
 ### HDU list (`fits-hdu-list-mode`)
 
-The entry point. Shows one row per Header/Data Unit with its index, name, type, dimensions, and a short summary.
+Entry view for one-row-per-HDU summary.
 
-```
-  FITS: /data/observation.fits
-
-  #  Name          Type       Dims              Info
-  ─────────────────────────────────────────────────────────────────
-  0  PRIMARY       IMAGE      [2048 × 2048]     BITPIX=-32
-  1  SCI           IMAGE      [2048 × 2048]     EXTVER=1
-  2  EVENTS        BIN_TABLE  1024 rows × 8 cols TFIELDS=8
-  3  GTI           BIN_TABLE  12 rows × 2 cols  TFIELDS=2
-```
-
-**Key bindings:**
-
-| Key | Action |
-|-----|--------|
-| `RET` | Open header / columns / data (prompts if multiple apply) |
-| `h` | Open header view for current HDU |
-| `c` | Open columns view (table HDUs only) |
-| `d` | Open data view |
-| `g` | Refresh HDU list |
-| `q` | Quit window |
-
----
+Keys:
+- `RET` prompt for view (`header` / `columns` / `data`)
+- `h` header view
+- `c` columns view (table HDUs)
+- `d` data view
+- `g` refresh
+- `q` quit window
 
 ### Header view (`fits-header-mode`)
 
-Shows all FITS header cards for the selected HDU as a two-column table (keyword / value). Long string values are not truncated.
+Shows `Keyword`, `Value`, and `Comment` cards for a selected HDU.
 
-```
-  Header: EVENTS (HDU 2)  —  /data/observation.fits
-
-  Keyword        Value
-  ─────────────────────────────────────────────────
-  XTENSION       BINTABLE
-  BITPIX         8
-  NAXIS          2
-  NAXIS1         64
-  NAXIS2         1024
-  TFIELDS        8
-  TTYPE1         TIME
-  TFORM1         D
-  TTYPE2         RA
-  TFORM2         E
-  …
-```
-
-**Key bindings:**
-
-| Key | Action |
-|-----|--------|
-| `q` | Back to HDU list |
-| `g` | Refresh |
-
----
+Keys:
+- `g` refresh
+- `q` back
 
 ### Columns view (`fits-columns-mode`)
 
-Available for table HDUs. Shows each column's index, TTYPE (name), TFORM (FITS format code), TUNIT (unit), and a short description where present.
+Shows table-column metadata (`Name`, `Format`, `Unit`, `Disp`) for table HDUs.
 
-```
-  Columns: EVENTS (HDU 2)  —  /data/observation.fits
-
-  #   Name     Format   Unit       Description
-  ─────────────────────────────────────────────────
-  1   TIME     D        s
-  2   RA       E        deg
-  3   DEC      E        deg
-  4   ENERGY   E        keV
-  5   GRADE    I
-  6   DETX     I        pixel
-  7   DETY     I        pixel
-  8   STATUS   B
-```
-
-**Key bindings:**
-
-| Key | Action |
-|-----|--------|
-| `q` | Back to HDU list |
-| `g` | Refresh |
-
----
+Keys:
+- `g` refresh
+- `q` back
 
 ### Data view (`fits-data-mode`)
 
-#### Table HDUs
+- **Table HDUs**: paginated rows with dynamic column sizing and horizontal scroll.
+- **Image/array HDUs**: downsampled ASCII preview plus summary stats in the mode line.
 
-Displays paginated table rows with dynamically-sized, right-aligned numeric columns. Numbers are rounded to `fits-mode-data-sig-figs` significant figures (default: 4). Column headers stay visible and scroll horizontally with the data.
+Keys:
+- `n` next page
+- `p` previous page
+- `j` jump to row offset
+- `g` refresh
+- `q` back
 
-```
-  Data: EVENTS (HDU 2)  —  rows 1–200 of 1024  —  /data/observation.fits
+## Text renderings
 
-  TIME        RA       DEC      ENERGY   GRADE   DETX   DETY   STATUS
-  ───────────────────────────────────────────────────────────────────
-  1.234e+08   83.82    -5.391   2.341       0    512    511       0
-  1.234e+08   83.75    -5.402   0.9127      1    498    523       0
-  1.234e+08   83.91    -5.378   7.654       0    530    504       0
-  …
-```
+### HDU list
 
-#### Image HDUs
-
-Displays a downsampled ASCII preview grid (default: 40 columns × 24 rows) with pixel statistics in the mode line.
-
-```
-  Data: PRIMARY (HDU 0)  —  IMAGE [2048 × 2048]  —  min=0.00 max=6.543e+04 mean=812.3 std=2341
-
-  ░░░░░░░▒▒▒▒▒▒▒░░▒▒▒▒▒▒▒▒▓▓▓▓▓▓▓▓▓███████▒▒
-  ░░░░░░░▒▒▒▒▒▒▒░░▒▒▒▒▒▒▒▒▓▓▓▓▓▓▓▓▓███████▒▒
-  ░▒▒▒▒▒▒▒▒▒░░░░░░░░░░▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒
-  …
+```text
+#  Name      Type       Dims               Info
+0  PRIMARY   IMAGE      [2048, 2048]       BITPIX=-32
+1  EVENTS    BIN_TABLE  1024 rows x 8 cols TFIELDS=8
 ```
 
-**Key bindings:**
+### Header
 
-| Key | Action |
-|-----|--------|
-| `n` | Next page of rows |
-| `p` | Previous page of rows |
-| `j` | Jump to row offset (prompts for number) |
-| `q` | Back to HDU list |
-| `g` | Refresh / reload current page |
+```text
+Keyword   Value     Comment
+XTENSION  BINTABLE
+TFIELDS   8
+TTYPE1    TIME
+```
 
----
+### Columns
+
+```text
+Name      Format  Unit  Disp
+TIME      D       s
+ENERGY    E       keV
+```
+
+### Data (table)
+
+```text
+TIME       RA      DEC     ENERGY
+1.234e+08  83.82   -5.391  2.341
+1.234e+08  83.75   -5.402  0.9127
+```
 
 ## Configuration
 
-All variables belong to the `fits-mode` customization group (`M-x customize-group RET fits-mode`).
+All options are in customization group `fits-mode` (`M-x customize-group RET fits-mode`):
 
-| Variable | Default | Description |
+| Option | Default | Description |
 |---|---|---|
-| `fits-mode-python-executable` | `"python3"` | Python interpreter used to run the helper. Set this to a full path or virtualenv python if needed. |
-| `fits-mode-data-page-size` | `200` | Number of table rows loaded per page. |
-| `fits-mode-data-sig-figs` | `4` | Significant figures for floating-point cells in data views. Header card values are always shown at full precision. |
-| `fits-mode-data-max-column-width` | `40` | Maximum character width of a data column. Columns are otherwise sized to fit their content on the current page. |
-| `fits-mode-image-grid-size` | `(40 . 24)` | Dimensions `(columns . rows)` of the downsampled preview grid for image HDUs. |
-| `fits-mode-file-regexp` | `\\.\\(fits\|fit\\)\\(\\.\\(fz\|gz\\)\\)?\\'` | Regexp controlling which file names trigger auto-mode and the file handler. |
+| `fits-mode-python-executable` | `"python3"` | Python executable used to invoke `fits-helper.py`. |
+| `fits-mode-data-page-size` | `200` | Rows fetched per page in `fits-data-mode` for table HDUs. |
+| `fits-mode-data-sig-figs` | `4` | Significant figures used for floating-point display in data views. |
+| `fits-mode-data-max-column-width` | `40` | Maximum display width for one data column in `fits-data-mode`. |
+| `fits-mode-image-grid-size` | `(40 . 24)` | Downsampled image preview grid size as `(ROWS . COLS)`. |
+| `fits-mode-file-regexp` | `"\\.\\(fits\\|fit\\)\\(\\.\\(fz\\|gz\\)\\)?\\'"` | Filename regexp used for auto-mode and file-handler registration. |
+| `fits-mode-columns-name-width` | `24` | Maximum display width for column names in `fits-columns-mode`. |
 
-Example customization:
+Example:
 
 ```elisp
-(use-package fits-mode
-  :load-path "~/.emacs.d/lisp/fits-mode"
-  :custom
-  (fits-mode-python-executable "/home/user/.venvs/astro/bin/python")
-  (fits-mode-data-page-size 500)
-  (fits-mode-data-sig-figs 6)
-  (fits-mode-image-grid-size '(60 . 30)))
+(setq fits-mode-python-executable "/path/to/python")
+(setq fits-mode-data-page-size 500)
+(setq fits-mode-data-sig-figs 6)
+(setq fits-mode-columns-name-width 32)
 ```
-
----
-
-## How it works
-
-`fits-mode` is split into two parts:
-
-- **`fits-mode.el`** — the Emacs Lisp front-end. It registers a `file-name-handler-alist` entry (the same mechanism used by `jka-compr` for transparent decompression) so that `find-file` on a FITS file intercepts `insert-file-contents`, prevents the binary payload from ever entering the buffer, and routes the buffer to `fits-hdu-list-mode`. All interactive views are built on `tabulated-list-mode`.
-
-- **`fits-helper.py`** — a small Python script that accepts a subcommand (`info`, `header`, `columns`, `data`) plus file path and parameters on the command line, and emits a JSON response. `fits-mode.el` calls this script synchronously via `call-process` and parses the result.
-
-Both files must live in the **same directory**; the Elisp locates the helper script relative to its own file path at load time.
-
----
-
-## Troubleshooting
-
-**`fits-mode: Python helper failed` or `ModuleNotFoundError: astropy`**
-Astropy is not installed for the Python executable `fits-mode` is using. Run:
-```sh
-pip install astropy
-```
-or set `fits-mode-python-executable` to point to a Python that has astropy:
-```elisp
-(setq fits-mode-python-executable "/path/to/venv/bin/python")
-```
-
-**File opens as raw binary / garbled text**
-The `file-name-handler-alist` entry may not be active. Check that the file name matches `fits-mode-file-regexp` and that `(require 'fits-mode)` ran without error.
-
-**Line wrapping in data view**
-`fits-data-mode` sets `truncate-lines`, `word-wrap`, and `visual-line-mode` buffer-locally and guards against global hooks re-enabling wrapping. If wrapping persists, check for a global mode that forces `visual-line-mode` on unknown buffer types.
-
-**Column header misaligned with data**
-The header line is rendered with an `:eval` form that reads `window-hscroll` on every redisplay. If it still looks off, try `g` to refresh the buffer, which rebuilds the column format from the current page's content.
