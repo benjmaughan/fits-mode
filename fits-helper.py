@@ -55,6 +55,25 @@ def _is_table(hdu):
     return getattr(hdu, "columns", None) is not None
 
 
+def _format_value(value, sig):
+    """Like `_jsonable`, but floats are rounded to SIG significant figures
+    and returned as a ready-to-display string (e.g. "158.8", "1.091e+00").
+    Used for table/image *data* cells, where readability beats precision;
+    header cards go through `_jsonable` unchanged since exact values there
+    (e.g. WCS keywords) matter."""
+    if isinstance(value, np.generic):
+        value = value.item()
+    if isinstance(value, float):
+        if value != value:  # NaN
+            return None
+        if value in (float("inf"), float("-inf")):
+            return "inf" if value > 0 else "-inf"
+        if value == 0:
+            return "0"
+        return f"{value:.{sig}g}"
+    return _jsonable(value)
+
+
 def cmd_info(args):
     out = []
     with fits.open(args.file, memmap=True) as hdul:
@@ -120,7 +139,7 @@ def cmd_columns(args):
     print(json.dumps(out))
 
 
-def _table_page(hdu, offset, limit):
+def _table_page(hdu, offset, limit, sig):
     data = hdu.data
     total = len(data) if data is not None else 0
     offset = max(0, offset)
@@ -134,11 +153,11 @@ def _table_page(hdu, offset, limit):
             v = rec[name]
             if isinstance(v, np.ndarray):
                 if v.size <= 8:
-                    row.append(json.dumps([_jsonable(x) for x in v.tolist()]))
+                    row.append(json.dumps([_format_value(x, sig) for x in v.tolist()]))
                 else:
                     row.append(f"<array {v.shape}>")
             else:
-                row.append(_jsonable(v))
+                row.append(_format_value(v, sig))
         rows.append(row)
     return {
         "kind": "table",
@@ -149,7 +168,7 @@ def _table_page(hdu, offset, limit):
     }
 
 
-def _image_preview(hdu, grid_rows, grid_cols):
+def _image_preview(hdu, grid_rows, grid_cols, sig):
     arr = hdu.data
     if arr is None:
         return {"kind": "image", "shape": [], "dtype": "", "stats": {},
@@ -178,14 +197,14 @@ def _image_preview(hdu, grid_rows, grid_cols):
         cstep = max(1, c // max(1, grid_cols))
         pooled = a2[::rstep, ::cstep][:grid_rows, :grid_cols]
         colnames = [str(i) for i in range(pooled.shape[1])]
-        rows = [[_jsonable(v) for v in row] for row in pooled.tolist()]
+        rows = [[_format_value(v, sig) for v in row] for row in pooled.tolist()]
     elif arr.ndim == 1:
         step = max(1, arr.shape[0] // max(1, grid_rows))
         colnames = ["value"]
-        rows = [[_jsonable(v)] for v in arr[::step][:grid_rows].tolist()]
+        rows = [[_format_value(v, sig)] for v in arr[::step][:grid_rows].tolist()]
     else:
         colnames = ["value"]
-        rows = [[_jsonable(arr.item())]]
+        rows = [[_format_value(arr.item(), sig)]]
 
     return {
         "kind": "image",
@@ -201,9 +220,9 @@ def cmd_data(args):
     with fits.open(args.file, memmap=True) as hdul:
         hdu = hdul[args.hdu]
         if _is_table(hdu):
-            result = _table_page(hdu, args.offset, args.limit)
+            result = _table_page(hdu, args.offset, args.limit, args.sig_figs)
         else:
-            result = _image_preview(hdu, args.grid_rows, args.grid_cols)
+            result = _image_preview(hdu, args.grid_rows, args.grid_cols, args.sig_figs)
     print(json.dumps(result))
 
 
@@ -232,6 +251,7 @@ def build_parser():
     p_data.add_argument("--limit", type=int, default=200)
     p_data.add_argument("--grid-rows", type=int, default=40)
     p_data.add_argument("--grid-cols", type=int, default=24)
+    p_data.add_argument("--sig-figs", type=int, default=4)
     p_data.set_defaults(func=cmd_data)
 
     return p

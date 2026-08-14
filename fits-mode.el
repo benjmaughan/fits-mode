@@ -67,6 +67,22 @@
   :type 'integer
   :group 'fits-mode)
 
+(defcustom fits-mode-data-sig-figs 4
+  "Number of significant figures floating-point data cells are rounded to.
+Applies to `fits-data-mode' (table rows and image preview grids) only;
+header card values are always shown at full precision."
+  :type 'integer
+  :group 'fits-mode)
+
+(defcustom fits-mode-data-max-column-width 40
+  "Maximum width, in characters, of a single column in `fits-data-mode'.
+Columns are otherwise sized to fit their content on the current page, so
+this only matters for pathological cases (very long strings or array
+reprs); numeric columns formatted to `fits-mode-data-sig-figs' rarely
+come close to it."
+  :type 'integer
+  :group 'fits-mode)
+
 (defcustom fits-mode-image-grid-size '(40 . 24)
   "Size, as (ROWS . COLS), of the downsampled preview grid for image HDUs."
   :type '(cons integer integer)
@@ -374,16 +390,65 @@
 (define-derived-mode fits-data-mode tabulated-list-mode "FITS-Data"
   "Major mode showing FITS table rows, or an image preview grid.
 
+Columns are sized to fit their content on the current page (numeric
+columns right-aligned, formatted to `fits-mode-data-sig-figs' significant
+figures) rather than to a fixed width, so nothing is truncated
+mid-number.  Lines are never wrapped (`tabulated-list-mode' already sets
+`truncate-lines'); move point or scroll horizontally
+(\\[scroll-left]/\\[scroll-right]) to bring off-screen columns into view,
+the same way you would in a wide `org-mode' table.  The column-name
+header line stays pinned at the top of the window and tracks horizontal
+scrolling with it.
+
 For table HDUs this pages through the real data (\\[fits-data-next-page]
 and \\[fits-data-prev-page] to page, \\[fits-data-jump-to-offset] to jump
 to a row offset).  For image/array HDUs, since the raw array can be very
-large, a downsampled preview grid is shown along with summary statistics
-in the header line.
+large, a downsampled preview grid is shown instead, with summary
+statistics shown in the mode line.
 
 \\{fits-data-mode-map}"
   (setq tabulated-list-padding 2)
   (setq buffer-read-only t)
   (setq revert-buffer-function (lambda (&rest _) (fits--data-load))))
+
+(defun fits--data-numeric-string-p (s)
+  "Non-nil if string S looks like a plain number (int, float, or exponent)."
+  (string-match-p "\\`-?[0-9]+\\(\\.[0-9]+\\)?\\([eE][-+]?[0-9]+\\)?\\'" s))
+
+(defun fits--data-cell-string (v)
+  "Turn a JSON-decoded data cell V into its display string."
+  (cond
+   ((null v) "")
+   ((eq v t) "T")
+   ((eq v :false) "F")
+   (t (format "%s" v))))
+
+(defun fits--data-compute-format (cols str-rows)
+  "Build a `tabulated-list-format' vector sized to fit COLS and STR-ROWS.
+COLS is a list of column-name strings; STR-ROWS is a list of lists of
+already-stringified cell values (see `fits--data-cell-string').  Columns
+whose values all look numeric are right-aligned; width is capped at
+`fits-mode-data-max-column-width'."
+  (let* ((ncols (length cols))
+         (widths (make-vector ncols 0))
+         (numeric (make-vector ncols t)))
+    (dotimes (i ncols)
+      (aset widths i (max 3 (length (nth i cols)))))
+    (dolist (row str-rows)
+      (dotimes (i ncols)
+        (let ((s (or (nth i row) "")))
+          (when (> (length s) (aref widths i))
+            (aset widths i (length s)))
+          (when (and (> (length s) 0) (not (fits--data-numeric-string-p s)))
+            (aset numeric i nil)))))
+    (let (fmt)
+      (dotimes (i ncols)
+        (push (list (nth i cols)
+                    (min fits-mode-data-max-column-width (+ 2 (aref widths i)))
+                    nil
+                    :right-align (and (aref numeric i) t))
+              fmt))
+      (vconcat (nreverse fmt)))))
 
 (defun fits--data-load ()
   (let* ((grid-rows (car fits-mode-image-grid-size))
@@ -393,39 +458,40 @@ in the header line.
                            "--offset" (number-to-string fits--data-offset)
                            "--limit" (number-to-string fits-mode-data-page-size)
                            "--grid-rows" (number-to-string grid-rows)
-                           "--grid-cols" (number-to-string grid-cols)))
+                           "--grid-cols" (number-to-string grid-cols)
+                           "--sig-figs" (number-to-string fits-mode-data-sig-figs)))
          (kind (alist-get 'kind res))
-         (cols (alist-get 'columns res))
-         (rows (alist-get 'rows res)))
+         (cols (mapcar (lambda (c) (format "%s" c)) (alist-get 'columns res)))
+         (raw-rows (alist-get 'rows res))
+         (str-rows (mapcar (lambda (row) (mapcar #'fits--data-cell-string row))
+                            raw-rows)))
     (setq fits--data-kind (intern kind))
-    (setq fits--data-total (or (alist-get 'total res) (length rows)))
-    (setq tabulated-list-format
-          (vconcat (mapcar (lambda (c) (list (format "%s" c) 14 nil)) cols)))
+    (setq fits--data-total (or (alist-get 'total res) (length raw-rows)))
+    (setq tabulated-list-format (fits--data-compute-format cols str-rows))
     (tabulated-list-init-header)
     (setq tabulated-list-entries
           (let ((i fits--data-offset))
-            (mapcar
-             (lambda (row)
-               (setq i (1+ i))
-               (list i (vconcat (mapcar (lambda (v) (format "%s" (or v ""))) row))))
-             rows)))
+            (mapcar (lambda (row)
+                      (setq i (1+ i))
+                      (list i (vconcat row)))
+                    str-rows)))
     (let ((inhibit-read-only t))
       (tabulated-list-print t))
-    (setq header-line-format
+    (goto-char (point-min))
+    (ignore-errors (set-window-hscroll (get-buffer-window) 0))
+    (setq mode-line-process
           (if (eq fits--data-kind 'image)
               (let ((stats (alist-get 'stats res)))
-                (format "Image preview (downsampled) shape=%s dtype=%s  min=%s max=%s mean=%s std=%s"
-                        (alist-get 'shape res)
-                        (alist-get 'dtype res)
-                        (alist-get 'min stats)
-                        (alist-get 'max stats)
-                        (alist-get 'mean stats)
-                        (alist-get 'std stats)))
-            (format "Rows %d-%d of %d   (n/p page, j jump, q back)"
+                (format "  [shape=%s dtype=%s min=%s max=%s mean=%s std=%s]"
+                        (alist-get 'shape res) (alist-get 'dtype res)
+                        (alist-get 'min stats) (alist-get 'max stats)
+                        (alist-get 'mean stats) (alist-get 'std stats)))
+            (format "  [rows %d-%d of %d]"
                     fits--data-offset
                     (max fits--data-offset
-                         (1- (+ fits--data-offset (length rows))))
-                    fits--data-total)))))
+                         (1- (+ fits--data-offset (length raw-rows))))
+                    fits--data-total)))
+    (force-mode-line-update)))
 
 (defun fits-data-refresh ()
   (interactive)
