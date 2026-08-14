@@ -407,7 +407,13 @@ large, a downsampled preview grid is shown instead, with summary
 statistics shown in the mode line.
 
 \\{fits-data-mode-map}"
-  (setq tabulated-list-padding 2)
+  (setq tabulated-list-padding 1)
+  (setq tabulated-list-use-header-line t)
+  (setq truncate-lines t)
+  (setq word-wrap nil)
+  (setq line-move-visual nil)
+  (when (bound-and-true-p visual-line-mode)
+    (visual-line-mode -1))
   (setq buffer-read-only t)
   (setq revert-buffer-function (lambda (&rest _) (fits--data-load))))
 
@@ -444,7 +450,7 @@ whose values all look numeric are right-aligned; width is capped at
     (let (fmt)
       (dotimes (i ncols)
         (push (list (nth i cols)
-                    (min fits-mode-data-max-column-width (+ 2 (aref widths i)))
+                    (min fits-mode-data-max-column-width (+ 1 (aref widths i)))
                     nil
                     :right-align (and (aref numeric i) t))
               fmt))
