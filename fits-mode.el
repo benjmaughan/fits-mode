@@ -375,6 +375,7 @@ come close to it."
 (defvar-local fits--data-offset 0)
 (defvar-local fits--data-total 0)
 (defvar-local fits--data-kind nil)   ; 'table or 'image
+(defvar-local fits--data-header-base nil)
 
 (defvar fits-data-mode-map
   (let ((map (make-sparse-keymap)))
@@ -386,6 +387,26 @@ come close to it."
     (define-key map "j" #'fits-data-jump-to-offset)
     map)
   "Keymap for `fits-data-mode'.")
+
+(defun fits--data-enforce-no-wrap ()
+  "Keep the current fits-data buffer in horizontal-scroll mode."
+  (when (or (bound-and-true-p visual-line-mode)
+            (not truncate-lines)
+            word-wrap
+            line-move-visual)
+    (setq-local truncate-lines t
+                word-wrap nil
+                line-move-visual nil)
+    (when (bound-and-true-p visual-line-mode)
+      (visual-line-mode -1))))
+
+(defun fits--data-header-line ()
+  "Render the `fits-data-mode' header adjusted for horizontal scroll."
+  (let* ((hscroll (window-hscroll))
+         (rendered (format-mode-line fits--data-header-base)))
+    (if (> hscroll 0)
+        (truncate-string-to-width rendered (string-width rendered) hscroll)
+      rendered)))
 
 (define-derived-mode fits-data-mode tabulated-list-mode "FITS-Data"
   "Major mode showing FITS table rows, or an image preview grid.
@@ -409,14 +430,13 @@ statistics shown in the mode line.
 \\{fits-data-mode-map}"
   (setq tabulated-list-padding 1)
   (setq tabulated-list-use-header-line t)
-  (setq truncate-lines t)
-  (setq word-wrap nil)
-  (setq line-move-visual nil)
-  (visual-line-mode -1)
-  ;; Prevent visual-line-mode from being turned on later (e.g. by a global hook).
-  (add-hook 'visual-line-mode-hook
-            (lambda () (when (bound-and-true-p visual-line-mode) (visual-line-mode -1)))
-            nil t)
+  (setq-local truncate-lines t
+              word-wrap nil
+              line-move-visual nil)
+  (when (bound-and-true-p visual-line-mode)
+    (visual-line-mode -1))
+  ;; Keep these settings enforced even if global/local hooks try to re-enable wrapping.
+  (add-hook 'visual-line-mode-hook #'fits--data-enforce-no-wrap nil t)
   (setq buffer-read-only t)
   (setq revert-buffer-function (lambda (&rest _) (fits--data-load))))
 
@@ -478,16 +498,9 @@ whose values all look numeric are right-aligned; width is capped at
     (setq fits--data-total (or (alist-get 'total res) (length raw-rows)))
     (setq tabulated-list-format (fits--data-compute-format cols str-rows))
     (tabulated-list-init-header)
-    ;; Wrap header-line-format so the header shifts left as the window
-    ;; is scrolled horizontally, keeping column names aligned with data.
-    (let ((raw-header header-line-format))
-      (setq header-line-format
-            `(:eval
-              (let* ((hscroll (window-hscroll))
-                     (rendered (format-mode-line ',raw-header)))
-                (if (> hscroll 0)
-                    (truncate-string-to-width rendered (string-width rendered) hscroll)
-                  rendered)))))
+    ;; Keep header names aligned with horizontally scrolled table content.
+    (setq fits--data-header-base header-line-format)
+    (setq header-line-format '(:eval (fits--data-header-line)))
     (setq tabulated-list-entries
           (let ((i fits--data-offset))
             (mapcar (lambda (row)
