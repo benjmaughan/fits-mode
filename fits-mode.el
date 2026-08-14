@@ -450,7 +450,7 @@ whose values all look numeric are right-aligned; width is capped at
     (let (fmt)
       (dotimes (i ncols)
         (push (list (nth i cols)
-                    (min fits-mode-data-max-column-width (aref widths i))
+                    (min fits-mode-data-max-column-width (+ 1 (aref widths i)))
                     nil
                     :right-align (and (aref numeric i) t))
               fmt))
