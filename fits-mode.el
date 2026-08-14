@@ -412,8 +412,11 @@ statistics shown in the mode line.
   (setq truncate-lines t)
   (setq word-wrap nil)
   (setq line-move-visual nil)
-  (when (bound-and-true-p visual-line-mode)
-    (visual-line-mode -1))
+  (visual-line-mode -1)
+  ;; Prevent visual-line-mode from being turned on later (e.g. by a global hook).
+  (add-hook 'visual-line-mode-hook
+            (lambda () (when (bound-and-true-p visual-line-mode) (visual-line-mode -1)))
+            nil t)
   (setq buffer-read-only t)
   (setq revert-buffer-function (lambda (&rest _) (fits--data-load))))
 
@@ -475,6 +478,16 @@ whose values all look numeric are right-aligned; width is capped at
     (setq fits--data-total (or (alist-get 'total res) (length raw-rows)))
     (setq tabulated-list-format (fits--data-compute-format cols str-rows))
     (tabulated-list-init-header)
+    ;; Wrap header-line-format so the header shifts left as the window
+    ;; is scrolled horizontally, keeping column names aligned with data.
+    (let ((raw-header header-line-format))
+      (setq header-line-format
+            `(:eval
+              (let* ((hscroll (window-hscroll))
+                     (rendered (format-mode-line ',raw-header)))
+                (if (> hscroll 0)
+                    (truncate-string-to-width rendered (string-width rendered) hscroll)
+                  rendered)))))
     (setq tabulated-list-entries
           (let ((i fits--data-offset))
             (mapcar (lambda (row)
