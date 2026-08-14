@@ -204,6 +204,7 @@ All variables belong to the `fits-mode` customization group (`M-x customize-grou
 | `fits-mode-data-max-column-width` | `40` | Maximum character width of a data column. Columns are otherwise sized to fit their content on the current page. |
 | `fits-mode-image-grid-size` | `(40 . 24)` | Dimensions `(columns . rows)` of the downsampled preview grid for image HDUs. |
 | `fits-mode-file-regexp` | `\\.\\(fits\|fit\\)\\(\\.\\(fz\|gz\\)\\)?\\'` | Regexp controlling which file names trigger auto-mode and the file handler. |
+| `fits-mode-columns-name-width` | `24` | Maximum display width for column names in `fits-columns-mode`. Increase this if your FITS table column names are longer than the default. |
 
 Example customization:
 
@@ -214,7 +215,8 @@ Example customization:
   (fits-mode-python-executable "/home/user/.venvs/astro/bin/python")
   (fits-mode-data-page-size 500)
   (fits-mode-data-sig-figs 6)
-  (fits-mode-image-grid-size '(60 . 30)))
+  (fits-mode-image-grid-size '(60 . 30))
+  (fits-mode-columns-name-width 32))
 ```
 
 ---
