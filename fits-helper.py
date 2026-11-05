@@ -14,6 +14,12 @@ Subcommands:
                                         -> a page of table rows, or a
                                            downsampled preview grid for
                                            image/array HDUs
+    ascii   FILE --hdu N [--max-width --max-height --char-aspect
+                          --stretch --clip-low --clip-high]
+                                        -> a block-averaged, contrast-
+                                           stretched intensity map of an
+                                           image HDU (levels 0-255), for
+                                           rendering as ASCII art
 
 On any failure a JSON object of the form {"error": ..., "message": ...}
 is printed instead, and the process exits non-zero.
@@ -216,6 +222,117 @@ def _image_preview(hdu, grid_rows, grid_cols, sig):
     }
 
 
+def _image_plane(hdu):
+    """Return the first 2-D plane of an image HDU as a float array, or None."""
+    arr = hdu.data
+    if arr is None:
+        return None
+    arr = np.asarray(arr)
+    if arr.ndim == 0:
+        return None
+    while arr.ndim > 2:
+        arr = arr[0]
+    if arr.ndim == 1:
+        arr = arr[np.newaxis, :]
+    return arr.astype(np.float64, copy=False)
+
+
+def _fit_grid(nrows, ncols, max_w, max_h, char_aspect):
+    """Choose an output (H, W) in characters that preserves the image's
+    aspect ratio, given that a character cell is CHAR_ASPECT times taller
+    than it is wide, and fits within MAX_W x MAX_H."""
+    max_w = max(1, max_w)
+    max_h = max(1, max_h)
+    w = min(max_w, ncols)
+    h = max(1, round(w * nrows / ncols / char_aspect))
+    if h > max_h:
+        h = max_h
+        w = max(1, round(h * char_aspect * ncols / nrows))
+    return min(h, nrows), min(w, ncols)
+
+
+def _block_mean(a, h, w):
+    """Downsample 2-D array A to roughly (H, W) by averaging blocks,
+    ignoring NaNs.  Very large arrays are first strided down so we never
+    average over more than a few samples per output cell in each axis."""
+    r, c = a.shape
+    # Cheap pre-subsample to keep the work (and memmap reads) bounded.
+    rs = max(1, r // (h * 4))
+    cs = max(1, c // (w * 4))
+    if rs > 1 or cs > 1:
+        a = a[::rs, ::cs]
+        r, c = a.shape
+    redges = np.linspace(0, r, h + 1).astype(int)
+    cedges = np.linspace(0, c, w + 1).astype(int)
+    out = np.full((h, w), np.nan)
+    with np.errstate(all="ignore"):
+        for i in range(h):
+            band = a[redges[i]:max(redges[i + 1], redges[i] + 1)]
+            for j in range(w):
+                block = band[:, cedges[j]:max(cedges[j + 1], cedges[j] + 1)]
+                fin = block[np.isfinite(block)]
+                if fin.size:
+                    out[i, j] = fin.mean()
+    return out
+
+
+def _stretch(a, kind, lo_pct, hi_pct):
+    """Clip A to the [LO_PCT, HI_PCT] percentiles, normalise to 0..1 and
+    apply a display stretch.  NaNs are preserved."""
+    fin = a[np.isfinite(a)]
+    if fin.size == 0:
+        return a, None, None
+    lo, hi = np.percentile(fin, [lo_pct, hi_pct])
+    if not hi > lo:
+        lo, hi = float(fin.min()), float(fin.max())
+    if not hi > lo:
+        return np.where(np.isfinite(a), 0.0, np.nan), float(lo), float(hi)
+    with np.errstate(all="ignore"):
+        x = np.clip((a - lo) / (hi - lo), 0.0, 1.0)
+        if kind == "sqrt":
+            x = np.sqrt(x)
+        elif kind == "log":
+            x = np.log10(1 + 1000 * x) / np.log10(1001)
+        elif kind == "asinh":
+            x = np.arcsinh(10 * x) / np.arcsinh(10)
+    return x, float(lo), float(hi)
+
+
+def cmd_ascii(args):
+    with fits.open(args.file, memmap=True) as hdul:
+        hdu = hdul[args.hdu]
+        if _is_table(hdu):
+            print(json.dumps({"error": "not-an-image",
+                              "message": "HDU %d is a table" % args.hdu}))
+            return
+        plane = _image_plane(hdu)
+        if plane is None:
+            print(json.dumps({"kind": "ascii", "shape": [], "plane": [],
+                              "grid": [0, 0], "stretch": args.stretch,
+                              "clip": [None, None], "levels": []}))
+            return
+        shape = list(np.shape(hdu.data))
+        nrows, ncols = plane.shape
+        h, w = _fit_grid(nrows, ncols, args.max_width, args.max_height,
+                         args.char_aspect)
+        pooled = _block_mean(plane, h, w)
+        norm, lo, hi = _stretch(pooled, args.stretch, args.clip_low, args.clip_high)
+        # FITS convention: pixel (1,1) is bottom-left, so flip vertically
+        # to display with the origin at the bottom like DS9 does.
+        norm = norm[::-1]
+        levels = [[None if not np.isfinite(v) else int(round(v * 255))
+                   for v in row] for row in norm]
+    print(json.dumps({
+        "kind": "ascii",
+        "shape": shape,
+        "plane": [nrows, ncols],
+        "grid": [h, w],
+        "stretch": args.stretch,
+        "clip": [_jsonable(lo), _jsonable(hi)],
+        "levels": levels,
+    }))
+
+
 def cmd_data(args):
     with fits.open(args.file, memmap=True) as hdul:
         hdu = hdul[args.hdu]
@@ -253,6 +370,18 @@ def build_parser():
     p_data.add_argument("--grid-cols", type=int, default=24)
     p_data.add_argument("--sig-figs", type=int, default=4)
     p_data.set_defaults(func=cmd_data)
+
+    p_ascii = sub.add_parser("ascii", help="intensity map of an image HDU for ASCII rendering")
+    p_ascii.add_argument("file")
+    p_ascii.add_argument("--hdu", type=int, required=True)
+    p_ascii.add_argument("--max-width", type=int, default=80)
+    p_ascii.add_argument("--max-height", type=int, default=40)
+    p_ascii.add_argument("--char-aspect", type=float, default=2.0)
+    p_ascii.add_argument("--stretch", choices=["linear", "sqrt", "log", "asinh"],
+                         default="asinh")
+    p_ascii.add_argument("--clip-low", type=float, default=0.5)
+    p_ascii.add_argument("--clip-high", type=float, default=99.5)
+    p_ascii.set_defaults(func=cmd_ascii)
 
     return p
 

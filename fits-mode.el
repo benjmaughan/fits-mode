@@ -43,6 +43,8 @@
 ;; Data buffers additionally support:
 ;;   n/p   next/previous page of rows (table HDUs)
 ;;   j     jump to a given row offset
+;;   t     toggle ASCII picture / numeric grid (image HDUs)
+;;   s     cycle the display stretch of the ASCII picture
 ;;
 ;; Requires Python 3 with astropy installed (`pip install astropy').
 
@@ -93,6 +95,54 @@ come close to it."
   :type '(cons integer integer)
   :group 'fits-mode)
 
+(defcustom fits-mode-image-default-view 'ascii
+  "How `fits-data-mode' first shows image HDUs.
+`ascii' renders a downsampled ASCII-art picture of the image; `table'
+shows a downsampled grid of numeric pixel values.  Toggle between the
+two with \\<fits-data-mode-map>\\[fits-data-toggle-image-view]."
+  :type '(choice (const :tag "ASCII picture" ascii)
+                 (const :tag "Numeric grid" table))
+  :group 'fits-mode)
+
+(defcustom fits-mode-image-ascii-ramp " .:-=+*#%@"
+  "Characters used for the ASCII image preview, from darkest to brightest.
+Any length of two or more works.  For a smoother look in fonts that
+support it, try \" ░▒▓█\"."
+  :type 'string
+  :group 'fits-mode)
+
+(defcustom fits-mode-image-ascii-nan-char ?\s
+  "Character drawn for preview cells containing only NaN/blank pixels."
+  :type 'character
+  :group 'fits-mode)
+
+(defcustom fits-mode-image-ascii-max-size nil
+  "Maximum size, as (COLS . ROWS), of the ASCII image preview.
+nil means fit the preview to the window it is displayed in."
+  :type '(choice (const :tag "Fit window" nil)
+                 (cons (integer :tag "Columns") (integer :tag "Rows")))
+  :group 'fits-mode)
+
+(defcustom fits-mode-image-char-aspect 2.0
+  "Height-to-width ratio of a character cell in your font.
+Used to keep the ASCII image preview's aspect ratio correct."
+  :type 'number
+  :group 'fits-mode)
+
+(defcustom fits-mode-image-stretch 'asinh
+  "Display stretch applied to the ASCII image preview.
+Pixel values are first clipped to the percentile range
+`fits-mode-image-clip-percentiles' and normalised; this then maps them
+to brightness.  Cycle through the choices with
+\\<fits-data-mode-map>\\[fits-data-cycle-stretch]."
+  :type '(choice (const linear) (const sqrt) (const log) (const asinh))
+  :group 'fits-mode)
+
+(defcustom fits-mode-image-clip-percentiles '(0.5 . 99.5)
+  "Percentiles (LOW . HIGH) at which pixel values are clipped for display."
+  :type '(cons number number)
+  :group 'fits-mode)
+
 (defcustom fits-mode-file-regexp
   "\\.\\(fits\\|fit\\)\\(\\.\\(fz\\|gz\\)\\)?\\'"
   "Regexp matching FITS file names, used for auto-mode and handler setup."
@@ -122,7 +172,8 @@ come close to it."
       (if (/= status 0)
           (error "fits-mode: helper exited %s: %s" status (string-trim output))
         (condition-case err
-            (json-parse-string output :object-type 'alist :array-type 'list)
+            (json-parse-string output :object-type 'alist :array-type 'list
+                               :null-object nil :false-object :false)
           (error
            (error "fits-mode: could not parse helper output (%s): %s"
                   err (string-trim output))))))))
@@ -380,6 +431,8 @@ come close to it."
 (defvar-local fits--data-offset 0)
 (defvar-local fits--data-total 0)
 (defvar-local fits--data-kind nil)   ; 'table or 'image
+(defvar-local fits--data-image-view nil) ; 'ascii or 'table, for image HDUs
+(defvar-local fits--data-stretch nil)    ; current stretch for ASCII view
 (defvar fits-data-mode-map
   (let ((map (make-sparse-keymap)))
     (set-keymap-parent map tabulated-list-mode-map)
@@ -388,6 +441,8 @@ come close to it."
     (define-key map "n" #'fits-data-next-page)
     (define-key map "p" #'fits-data-prev-page)
     (define-key map "j" #'fits-data-jump-to-offset)
+    (define-key map "t" #'fits-data-toggle-image-view)
+    (define-key map "s" #'fits-data-cycle-stretch)
     map)
   "Keymap for `fits-data-mode'.")
 
@@ -518,7 +573,63 @@ whose values all look numeric are right-aligned; width is capped at
               fmt))
       (vconcat (nreverse fmt)))))
 
+(defun fits--data-ascii-target-size ()
+  "Return (COLS . ROWS) available for the ASCII image preview."
+  (or fits-mode-image-ascii-max-size
+      (let ((win (or (get-buffer-window) (selected-window))))
+        (cons (max 10 (- (window-body-width win) 2))
+              (max 5 (- (window-body-height win) 1))))))
+
+(defun fits--data-ascii-char (level)
+  "Map an intensity LEVEL (0-255, or nil for NaN) to a ramp character."
+  (let* ((ramp fits-mode-image-ascii-ramp)
+         (n (length ramp)))
+    (if (null level)
+        fits-mode-image-ascii-nan-char
+      (aref ramp (min (1- n) (/ (* level n) 256))))))
+
+(defun fits--data-load-ascii ()
+  "Render the current image HDU as ASCII art in this buffer."
+  (let* ((size (fits--data-ascii-target-size))
+         (clip fits-mode-image-clip-percentiles)
+         (res (fits--call "ascii" fits--file
+                          "--hdu" (number-to-string fits--hdu-index)
+                          "--max-width" (number-to-string (car size))
+                          "--max-height" (number-to-string (cdr size))
+                          "--char-aspect" (number-to-string
+                                           fits-mode-image-char-aspect)
+                          "--stretch" (symbol-name fits--data-stretch)
+                          "--clip-low" (number-to-string (car clip))
+                          "--clip-high" (number-to-string (cdr clip))))
+         (levels (alist-get 'levels res))
+         (clipv (alist-get 'clip res)))
+    (setq tabulated-list-format []
+          tabulated-list-entries nil)
+    (setq header-line-format
+          (format " %s  shape=%s  grid=%s  stretch=%s  clip=[%s, %s]   (t: numbers, s: stretch)"
+                  (fits--current-file-basename)
+                  (mapconcat #'number-to-string (alist-get 'shape res) "x")
+                  (mapconcat #'number-to-string (alist-get 'grid res) "x")
+                  (alist-get 'stretch res)
+                  (if (numberp (car clipv)) (format "%.4g" (car clipv)) "-")
+                  (if (numberp (cadr clipv)) (format "%.4g" (cadr clipv)) "-")))
+    (let ((inhibit-read-only t))
+      (erase-buffer)
+      (unless levels
+        (insert "(this HDU has no image data)\n"))
+      (dolist (row levels)
+        (insert (apply #'string (mapcar #'fits--data-ascii-char row)) "\n")))
+    (goto-char (point-min))
+    (ignore-errors (set-window-hscroll (get-buffer-window) 0))
+    (setq mode-line-process nil)
+    (force-mode-line-update)))
+
 (defun fits--data-load ()
+  (if (and (eq fits--data-kind 'image) (eq fits--data-image-view 'ascii))
+      (fits--data-load-ascii)
+    (fits--data-load-table)))
+
+(defun fits--data-load-table ()
   (let* ((grid-rows (car fits-mode-image-grid-size))
          (grid-cols (cdr fits-mode-image-grid-size))
          (res (fits--call "data" fits--file
@@ -568,6 +679,26 @@ whose values all look numeric are right-aligned; width is capped at
   (interactive)
   (fits--data-load))
 
+(defun fits-data-toggle-image-view ()
+  "Toggle an image HDU between the ASCII picture and the numeric grid."
+  (interactive)
+  (unless (eq fits--data-kind 'image)
+    (user-error "Not an image HDU"))
+  (setq fits--data-image-view
+        (if (eq fits--data-image-view 'ascii) 'table 'ascii))
+  (fits--data-load))
+
+(defun fits-data-cycle-stretch ()
+  "Cycle the display stretch of the ASCII image preview."
+  (interactive)
+  (unless (and (eq fits--data-kind 'image) (eq fits--data-image-view 'ascii))
+    (user-error "Stretch only applies to the ASCII image view"))
+  (let* ((order '(linear sqrt log asinh))
+         (next (or (cadr (memq fits--data-stretch order)) (car order))))
+    (setq fits--data-stretch next)
+    (fits--data-load)
+    (message "fits-mode: stretch %s" next)))
+
 (defun fits-data-next-page ()
   "Advance to the next page of rows (table HDUs only)."
   (interactive)
@@ -603,10 +734,14 @@ whose values all look numeric are right-aligned; width is capped at
       (setq fits--file file
             fits--hdu-index idx
             fits--parent-buffer parent
-            fits--data-offset 0)
+            fits--data-offset 0
+            fits--data-kind (if (fits--hdu-is-table-p hdu) 'table 'image)
+            fits--data-image-view fits-mode-image-default-view
+            fits--data-stretch fits-mode-image-stretch)
+      ;; Display first so the ASCII preview can size itself to the window.
+      (pop-to-buffer (current-buffer))
       (fits--data-load)
-      (goto-char (point-min))
-      (pop-to-buffer (current-buffer)))))
+      (goto-char (point-min)))))
 
 ;;; Entry points
 
