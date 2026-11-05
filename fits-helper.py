@@ -252,28 +252,28 @@ def _fit_grid(nrows, ncols, max_w, max_h, char_aspect):
 
 
 def _block_mean(a, h, w):
-    """Downsample 2-D array A to roughly (H, W) by averaging blocks,
-    ignoring NaNs.  Very large arrays are first strided down so we never
-    average over more than a few samples per output cell in each axis."""
-    r, c = a.shape
-    # Cheap pre-subsample to keep the work (and memmap reads) bounded.
-    rs = max(1, r // (h * 4))
-    cs = max(1, c // (w * 4))
+    """Downsample 2-D array A to (H, W) by averaging blocks, ignoring NaNs.
+    H and W must not exceed A's shape.  Very large arrays are first
+    strided down so we never average over more than a few samples per
+    output cell in each axis (this bounds both the work and the memmap
+    reads)."""
+    rs = max(1, a.shape[0] // (h * 4))
+    cs = max(1, a.shape[1] // (w * 4))
     if rs > 1 or cs > 1:
         a = a[::rs, ::cs]
-        r, c = a.shape
-    redges = np.linspace(0, r, h + 1).astype(int)
-    cedges = np.linspace(0, c, w + 1).astype(int)
-    out = np.full((h, w), np.nan)
+    r, c = a.shape
+    redges = np.linspace(0, r, h + 1).astype(int)[:-1]
+    cedges = np.linspace(0, c, w + 1).astype(int)[:-1]
+    fin = np.isfinite(a)
+    vals = np.where(fin, a, 0.0)
+
+    def pool(x):
+        return np.add.reduceat(np.add.reduceat(x, redges, axis=0), cedges, axis=1)
+
+    total = pool(vals)
+    count = pool(fin.astype(np.float64))
     with np.errstate(all="ignore"):
-        for i in range(h):
-            band = a[redges[i]:max(redges[i + 1], redges[i] + 1)]
-            for j in range(w):
-                block = band[:, cedges[j]:max(cedges[j + 1], cedges[j] + 1)]
-                fin = block[np.isfinite(block)]
-                if fin.size:
-                    out[i, j] = fin.mean()
-    return out
+        return np.where(count > 0, total / count, np.nan)
 
 
 def _stretch(a, kind, lo_pct, hi_pct):

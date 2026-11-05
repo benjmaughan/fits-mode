@@ -169,7 +169,7 @@ Displays paginated table rows with dynamically-sized, right-aligned numeric colu
 
 #### Image HDUs
 
-By default, image HDUs are shown as an ASCII-art picture: the first 2-D plane is block-averaged down to fit the window (keeping the aspect ratio), clipped at the 0.5/99.5 percentiles, stretched, and drawn with a character ramp. Like DS9, pixel (1,1) is at the bottom left. The header line shows the shape, preview size, stretch and clip levels.
+By default, image HDUs are shown as an ASCII-art picture: the first 2-D plane is block-averaged down to the width of the window (keeping the aspect ratio; scroll down for tall images), clipped at the 0.5/99.5 percentiles, stretched, and drawn with a character ramp. Like DS9, pixel (1,1) is at the bottom left. The header line shows the image shape and preview grid (both rows × columns), zoom, stretch and clip levels; a reminder of the keys is shown above the picture.
 
 ```
                     .
@@ -183,6 +183,8 @@ By default, image HDUs are shown as an ASCII-art picture: the first 2-D plane is
 
 Press `t` to switch to a downsampled grid of numeric pixel values (summary statistics go in the mode line), and `s` to cycle the stretch (`linear` → `sqrt` → `log` → `asinh`).
 
+Press `+` (or `=`) to zoom in and `-` to zoom out, by a factor of 1.5 each time; `0` resets. Zooming in draws the picture with more characters, so finer detail becomes visible, up to one character per pixel; scroll as usual (`C-x <` / `C-x >` horizontally) to move around. Zoom also scales the numeric grid.
+
 **Key bindings:**
 
 | Key | Action |
@@ -192,6 +194,9 @@ Press `t` to switch to a downsampled grid of numeric pixel values (summary stati
 | `j` | Jump to row offset (prompts for number) |
 | `t` | Toggle ASCII picture / numeric grid (image HDUs) |
 | `s` | Cycle ASCII stretch: linear, sqrt, log, asinh (image HDUs) |
+| `+` / `=` | Zoom image preview in (image HDUs) |
+| `-` | Zoom image preview out (image HDUs) |
+| `0` | Reset zoom (image HDUs) |
 | `q` | Back to HDU list |
 | `g` | Refresh / reload current page |
 
@@ -207,11 +212,13 @@ All variables belong to the `fits-mode` customization group (`M-x customize-grou
 | `fits-mode-data-page-size` | `200` | Number of table rows loaded per page. |
 | `fits-mode-data-sig-figs` | `4` | Significant figures for floating-point cells in data views. Header card values are always shown at full precision. |
 | `fits-mode-data-max-column-width` | `40` | Maximum character width of a data column. Columns are otherwise sized to fit their content on the current page. |
-| `fits-mode-image-grid-size` | `(40 . 24)` | Dimensions `(rows . columns)` of the numeric preview grid for image HDUs. |
+| `fits-mode-image-grid-size` | `(40 . 24)` | Dimensions `(rows . columns)` of the numeric preview grid for image HDUs at zoom 1. |
 | `fits-mode-image-default-view` | `ascii` | Initial view for image HDUs: `ascii` (picture) or `table` (numeric grid). |
 | `fits-mode-image-ascii-ramp` | `" .:-=+*#%@"` | Characters from darkest to brightest. Try `" ░▒▓█"` for a smoother look. |
 | `fits-mode-image-ascii-nan-char` | `?\s` | Character used where a cell holds only NaN pixels. |
-| `fits-mode-image-ascii-max-size` | `nil` | Maximum `(columns . rows)` of the ASCII picture; `nil` fits it to the window. |
+| `fits-mode-image-ascii-max-size` | `nil` | Size `(columns . rows)` of the ASCII picture at zoom 1; `nil` sizes it to the window. |
+| `fits-mode-image-ascii-fit` | `width` | With no fixed size: `width` fills the window width (scroll for tall images); `window` fits the whole image in the window. |
+| `fits-mode-image-zoom-step` | `1.5` | Factor each `+`/`-` press zooms by. |
 | `fits-mode-image-char-aspect` | `2.0` | Height/width ratio of a character cell, used to keep the aspect ratio correct. |
 | `fits-mode-image-stretch` | `asinh` | Initial stretch: `linear`, `sqrt`, `log` or `asinh`. |
 | `fits-mode-image-clip-percentiles` | `(0.5 . 99.5)` | Low/high percentiles at which pixel values are clipped for display. |
