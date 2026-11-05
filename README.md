@@ -169,16 +169,19 @@ Displays paginated table rows with dynamically-sized, right-aligned numeric colu
 
 #### Image HDUs
 
-Displays a downsampled ASCII preview grid (default: 40 columns × 24 rows) with pixel statistics in the mode line.
+By default, image HDUs are shown as an ASCII-art picture: the first 2-D plane is block-averaged down to fit the window (keeping the aspect ratio), clipped at the 0.5/99.5 percentiles, stretched, and drawn with a character ramp. Like DS9, pixel (1,1) is at the bottom left. The header line shows the shape, preview size, stretch and clip levels.
 
 ```
-  Data: PRIMARY (HDU 0)  —  IMAGE [2048 × 2048]  —  min=0.00 max=6.543e+04 mean=812.3 std=2341
+                    .
+                  =%@#:
+                 .*@@%=
+                   .:.
 
-  ░░░░░░░▒▒▒▒▒▒▒░░▒▒▒▒▒▒▒▒▓▓▓▓▓▓▓▓▓███████▒▒
-  ░░░░░░░▒▒▒▒▒▒▒░░▒▒▒▒▒▒▒▒▓▓▓▓▓▓▓▓▓███████▒▒
-  ░▒▒▒▒▒▒▒▒▒░░░░░░░░░░▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒
-  …
+      %#
+      @%        :.
 ```
+
+Press `t` to switch to a downsampled grid of numeric pixel values (summary statistics go in the mode line), and `s` to cycle the stretch (`linear` → `sqrt` → `log` → `asinh`).
 
 **Key bindings:**
 
@@ -187,6 +190,8 @@ Displays a downsampled ASCII preview grid (default: 40 columns × 24 rows) with 
 | `n` | Next page of rows |
 | `p` | Previous page of rows |
 | `j` | Jump to row offset (prompts for number) |
+| `t` | Toggle ASCII picture / numeric grid (image HDUs) |
+| `s` | Cycle ASCII stretch: linear, sqrt, log, asinh (image HDUs) |
 | `q` | Back to HDU list |
 | `g` | Refresh / reload current page |
 
@@ -202,7 +207,14 @@ All variables belong to the `fits-mode` customization group (`M-x customize-grou
 | `fits-mode-data-page-size` | `200` | Number of table rows loaded per page. |
 | `fits-mode-data-sig-figs` | `4` | Significant figures for floating-point cells in data views. Header card values are always shown at full precision. |
 | `fits-mode-data-max-column-width` | `40` | Maximum character width of a data column. Columns are otherwise sized to fit their content on the current page. |
-| `fits-mode-image-grid-size` | `(40 . 24)` | Dimensions `(columns . rows)` of the downsampled preview grid for image HDUs. |
+| `fits-mode-image-grid-size` | `(40 . 24)` | Dimensions `(rows . columns)` of the numeric preview grid for image HDUs. |
+| `fits-mode-image-default-view` | `ascii` | Initial view for image HDUs: `ascii` (picture) or `table` (numeric grid). |
+| `fits-mode-image-ascii-ramp` | `" .:-=+*#%@"` | Characters from darkest to brightest. Try `" ░▒▓█"` for a smoother look. |
+| `fits-mode-image-ascii-nan-char` | `?\s` | Character used where a cell holds only NaN pixels. |
+| `fits-mode-image-ascii-max-size` | `nil` | Maximum `(columns . rows)` of the ASCII picture; `nil` fits it to the window. |
+| `fits-mode-image-char-aspect` | `2.0` | Height/width ratio of a character cell, used to keep the aspect ratio correct. |
+| `fits-mode-image-stretch` | `asinh` | Initial stretch: `linear`, `sqrt`, `log` or `asinh`. |
+| `fits-mode-image-clip-percentiles` | `(0.5 . 99.5)` | Low/high percentiles at which pixel values are clipped for display. |
 | `fits-mode-file-regexp` | `\\.\\(fits\|fit\\)\\(\\.\\(fz\|gz\\)\\)?\\'` | Regexp controlling which file names trigger auto-mode and the file handler. |
 | `fits-mode-columns-name-width` | `24` | Maximum display width for column names in `fits-columns-mode`. Increase this if your FITS table column names are longer than the default. |
 
@@ -227,7 +239,7 @@ Example customization:
 
 - **`fits-mode.el`** — the Emacs Lisp front-end. It registers a `file-name-handler-alist` entry (the same mechanism used by `jka-compr` for transparent decompression) so that `find-file` on a FITS file intercepts `insert-file-contents`, prevents the binary payload from ever entering the buffer, and routes the buffer to `fits-hdu-list-mode`. All interactive views are built on `tabulated-list-mode`.
 
-- **`fits-helper.py`** — a small Python script that accepts a subcommand (`info`, `header`, `columns`, `data`) plus file path and parameters on the command line, and emits a JSON response. `fits-mode.el` calls this script synchronously via `call-process` and parses the result.
+- **`fits-helper.py`** — a small Python script that accepts a subcommand (`info`, `header`, `columns`, `data`, `ascii`) plus file path and parameters on the command line, and emits a JSON response. `fits-mode.el` calls this script synchronously via `call-process` and parses the result.
 
 Both files must live in the **same directory**; the Elisp locates the helper script relative to its own file path at load time.
 
