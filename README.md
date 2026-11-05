@@ -2,7 +2,7 @@
 
 An Emacs major mode for browsing [FITS](https://fits.gsfc.nasa.gov/) files — without loading the binary payload into a buffer.
 
-`fits-mode` provides a set of read-only, tabulated views for inspecting FITS HDUs, headers, table columns, and table/image data, all from within Emacs. It uses a small Python/[astropy](https://www.astropy.org/) helper script as the parsing back-end and communicates over JSON, so the Emacs side stays pure Elisp with no binary I/O.
+`fits-mode` provides a set of read-only views for inspecting FITS HDUs, headers, table columns and table data, and shows images as zoomable ASCII-art pictures, all from within Emacs. It uses a small Python/[astropy](https://www.astropy.org/) helper script as the parsing back-end and communicates over JSON, so the Emacs side stays pure Elisp with no binary I/O.
 
 ---
 
@@ -58,6 +58,12 @@ M-x fits-open-file RET my-data.fits RET
 ```
 
 Either command opens the **HDU list** view.
+
+### Try it with the example image
+
+The repository includes an example file, `m51_optical_B_small.fits`: a 357 × 318 pixel optical (B-band) image of the spiral of the Whirlpool Galaxy, M51. Open it, move to the `PRIMARY` row and press `d` to see it drawn as ASCII art (see [Image HDUs](#image-hdus) below).
+
+> **Image credit:** the example image (`m51_optical_B_small.fits`, `m51_optical_B_small.png`, and the image shown in `fits-mode-screenshot.png`) is credited to **NASA/STScI**. It comes from the Chandra X-ray Center's Open FITS multiwavelength data page: <https://chandra.harvard.edu/photo/openFITS/multiwavelength_data.html>
 
 ---
 
@@ -169,29 +175,36 @@ Displays paginated table rows with dynamically-sized, right-aligned numeric colu
 
 #### Image HDUs
 
-By default, image HDUs are shown as an ASCII-art picture: the first 2-D plane is block-averaged down to the width of the window (keeping the aspect ratio; scroll down for tall images), clipped at the 0.5/99.5 percentiles, stretched, and drawn with a character ramp. Like DS9, pixel (1,1) is at the bottom left. The header line shows the image shape and preview grid (both rows × columns), zoom, stretch and clip levels; a reminder of the keys is shown above the picture.
+By default, image HDUs are shown as an ASCII-art picture. The first 2-D plane of the image is:
 
-```
-                    .
-                  =%@#:
-                 .*@@%=
-                   .:.
+1. block-averaged down to the width of the window, keeping the aspect ratio (scroll down for tall images; NaN pixels are skipped),
+2. clipped at the 0.5 and 99.5 percentiles,
+3. stretched (`asinh` by default), and
+4. drawn with a character ramp from dark (a space) to bright (`@`).
 
-      %#
-      @%        :.
-```
+As in DS9, pixel (1,1) is at the bottom left. The header line shows the image's shape and the size of the picture (both as rows × columns), the zoom, stretch and clip levels. The line above the picture is a reminder of the keys.
 
-Press `t` to switch to a downsampled grid of numeric pixel values (summary statistics go in the mode line), and `s` to cycle the stretch (`linear` → `sqrt` → `log` → `asinh`).
+This screenshot shows the example M51 image: on the left, a DS9 rendering of it (as a PNG, viewed in Emacs); on the right, `fits-mode`'s ASCII view of `m51_optical_B_small.fits` at the default zoom.
 
-Press `+` (or `=`) to zoom in and `-` to zoom out, by a factor of 1.5 each time; `0` resets. Zooming in draws the picture with more characters, so finer detail becomes visible, up to one character per pixel; scroll as usual (`C-x <` / `C-x >` horizontally) to move around. Zoom also scales the numeric grid.
+![fits-mode showing the example M51 image as ASCII art (right), next to a DS9 rendering of the same image (left). Image credit: NASA/STScI.](fits-mode-screenshot.png)
+
+*Example image credit: NASA/STScI, via [Chandra Open FITS](https://chandra.harvard.edu/photo/openFITS/multiwavelength_data.html).*
+
+**Changing the stretch.** Press `s` to cycle through `linear` → `sqrt` → `log` → `asinh`. `linear` shows only the brightest parts; `log` and `asinh` bring out faint structure such as spiral arms.
+
+**Zooming.** Press `+` (or `=`) to zoom in and `-` to zoom out, by a factor of 1.5 each time (`fits-mode-image-zoom-step`); `0` resets. Zooming in draws the picture with more characters, so finer detail appears, up to one character per pixel, after which `+` tells you the image is at full resolution. Use the normal motion keys to scroll, and `C-x <` / `C-x >` to scroll sideways.
+
+**Numbers.** Press `t` to switch to a downsampled grid of pixel values, with summary statistics (min, max, mean, standard deviation) in the mode line; press `t` again to return to the picture. Zoom also scales this grid.
+
+**Look and size.** The characters, picture size, aspect correction, stretch and clipping are all configurable; see the `fits-mode-image-*` variables under [Configuration](#configuration). For a smoother picture in fonts that support it, set `fits-mode-image-ascii-ramp` to `" ░▒▓█"`.
 
 **Key bindings:**
 
 | Key | Action |
 |-----|--------|
-| `n` | Next page of rows |
-| `p` | Previous page of rows |
-| `j` | Jump to row offset (prompts for number) |
+| `n` | Next page of rows (table HDUs) |
+| `p` | Previous page of rows (table HDUs) |
+| `j` | Jump to row offset (table HDUs) |
 | `t` | Toggle ASCII picture / numeric grid (image HDUs) |
 | `s` | Cycle ASCII stretch: linear, sqrt, log, asinh (image HDUs) |
 | `+` / `=` | Zoom image preview in (image HDUs) |
@@ -235,6 +248,9 @@ Example customization:
   (fits-mode-data-page-size 500)
   (fits-mode-data-sig-figs 6)
   (fits-mode-image-grid-size '(60 . 30))
+  (fits-mode-image-stretch 'log)
+  (fits-mode-image-zoom-step 2.0)
+  (fits-mode-image-ascii-ramp " ░▒▓█")
   (fits-mode-columns-name-width 32))
 ```
 
@@ -267,8 +283,20 @@ or set `fits-mode-python-executable` to point to a Python that has astropy:
 **File opens as raw binary / garbled text**
 The `file-name-handler-alist` entry may not be active. Check that the file name matches `fits-mode-file-regexp` and that `(require 'fits-mode)` ran without error.
 
+**New keys don't work after updating**
+If you load a new version of `fits-mode.el` into an Emacs session that already had an older one loaded, existing FITS buffers keep their old state. Kill the `*FITS …*` buffers and open the file again; restarting Emacs is the surest fix. Check which file Emacs actually loads with `M-x locate-library RET fits-mode`; if it is an old `fits-mode.elc`, delete or recompile it, because Emacs prefers the `.elc` even when the `.el` is newer.
+
+**Image preview is mostly blank or all one character**
+Try `s` to change the stretch: astronomical images often have a few very bright pixels, so a `linear` stretch leaves everything else dark. Large blank areas usually mean NaN pixels; set `fits-mode-image-ascii-nan-char` to a visible character such as `?·` to show them.
+
 **Line wrapping in data view**
 `fits-data-mode` sets `truncate-lines`, `word-wrap`, and `visual-line-mode` buffer-locally and guards against global hooks re-enabling wrapping. If wrapping persists, check for a global mode that forces `visual-line-mode` on unknown buffer types.
 
 **Column header misaligned with data**
 The header line is rendered with an `:eval` form that reads `window-hscroll` on every redisplay. If it still looks off, try `g` to refresh the buffer, which rebuilds the column format from the current page's content.
+
+---
+
+## Credits
+
+The example image `m51_optical_B_small.fits` (and its PNG version, `m51_optical_B_small.png`, also shown in `fits-mode-screenshot.png`) is credited to **NASA/STScI**, and was obtained from the Chandra X-ray Center's Open FITS multiwavelength data page: <https://chandra.harvard.edu/photo/openFITS/multiwavelength_data.html>
