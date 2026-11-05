@@ -61,9 +61,9 @@ Either command opens the **HDU list** view.
 
 ### Try it with the example image
 
-The repository includes an example file, `m51_optical_B_small.fits`: an optical (B-band) image of the Whirlpool Galaxy, M51, and its companion. Open it, move to the `PRIMARY` row and press `d` to see it drawn as ASCII art (see [Image HDUs](#image-hdus) below). `m51_optical_B_small.png` shows the same image as an ordinary picture, for comparison.
+The repository includes an example file, `m51_optical_B_small.fits`: a 357 × 318 pixel optical (B-band) image of the spiral of the Whirlpool Galaxy, M51. Open it, move to the `PRIMARY` row and press `d` to see it drawn as ASCII art (see [Image HDUs](#image-hdus) below).
 
-> **Image credit:** the example image (`m51_optical_B_small.fits` and `m51_optical_B_small.png`) is credited to **NASA/STScI**. It comes from the Chandra X-ray Center's Open FITS multiwavelength data page: <https://chandra.harvard.edu/photo/openFITS/multiwavelength_data.html>
+> **Image credit:** the example image (`m51_optical_B_small.fits`, `m51_optical_B_small.png`, and the image shown in `fits-mode-screenshot.png`) is credited to **NASA/STScI**. It comes from the Chandra X-ray Center's Open FITS multiwavelength data page: <https://chandra.harvard.edu/photo/openFITS/multiwavelength_data.html>
 
 ---
 
@@ -184,42 +184,11 @@ By default, image HDUs are shown as an ASCII-art picture. The first 2-D plane of
 
 As in DS9, pixel (1,1) is at the bottom left. The header line shows the image's shape and the size of the picture (both as rows × columns), the zoom, stretch and clip levels. The line above the picture is a reminder of the keys.
 
-This is the example M51 image in a 96-column window (the blank NaN margins either side of the galaxy are trimmed here):
+This screenshot shows the example M51 image: on the left, a DS9 rendering of it (as a PNG, viewed in Emacs); on the right, `fits-mode`'s ASCII view of `m51_optical_B_small.fits` at the default zoom.
 
-```
-shape=479x934  grid=25x96  zoom=1x  stretch=asinh  clip=[3585, 4.202e+04]
-t: numbers   s: stretch   +/-: zoom   0: reset zoom   g: refresh   q: back
-.:----:-=+++=------===-:.      ...
- .:--==+#%%#*++========--:......
-::--=+*#%@@@%%#**+++=+=----:..
-:--=+###+#@@@%##**++===----:..
---=+*##**#@@@###**+=------:...
---=+**+=+*%@%###*+=-----::.
---=+*+===++++++=-----:::.  .
-::=++-+======--===-::..  .
-:-+*+=++*=+*##+***++++-:..
-:=#*+++**%#%%##%%######*=:.
-:+#++**#%@@%%#%###%%%@%###+:.:
-=*#**%%#@@#%####*###########==:
-=+*#%%#%@%%#*#%#%#%*%%####*##*-:
--++*#%@#%%###%%%%%%%%%#%###*##+-.
-#=*###*%@%%#%@#@@@@%%%%#%###+*#=:.
-:==###*#%@%%#%@@@@@%%#%%%@%####*-.
---=*##*##@@%%#%%%%#%##%@@%##%##*=:
---=*#*****%@@%%%%#%%###%@%####*#+-
-.:=+*#***+*###%%@#%#%%%%@%*+#***+=
-...-+%%#*+***##*#%%%@%%%%#*+****+=
-.  .-+*##*###*########%@%#*+**+#*+
-    .:=+*#*#***###%#%%%###***++#*-
-.     ::=+*##%####**#++===+++=**+:
-    . .::==+==-==--+*---=====**=:.
-.  . ...::::::-:::-=+:------=++-.
-```
+![fits-mode showing the example M51 image as ASCII art (right), next to a DS9 rendering of the same image (left). Image credit: NASA/STScI.](fits-mode-screenshot.png)
 
-<p align="center">
-  <img src="m51_optical_B_small.png" alt="The example M51 image (credit: NASA/STScI)" width="320"><br>
-  <em>The same image as a normal picture. Credit: NASA/STScI, via <a href="https://chandra.harvard.edu/photo/openFITS/multiwavelength_data.html">Chandra Open FITS</a>.</em>
-</p>
+*Example image credit: NASA/STScI, via [Chandra Open FITS](https://chandra.harvard.edu/photo/openFITS/multiwavelength_data.html).*
 
 **Changing the stretch.** Press `s` to cycle through `linear` → `sqrt` → `log` → `asinh`. `linear` shows only the brightest parts; `log` and `asinh` bring out faint structure such as spiral arms.
 
@@ -330,4 +299,4 @@ The header line is rendered with an `:eval` form that reads `window-hscroll` on 
 
 ## Credits
 
-The example image `m51_optical_B_small.fits` (and its PNG version, `m51_optical_B_small.png`) is credited to **NASA/STScI**, and was obtained from the Chandra X-ray Center's Open FITS multiwavelength data page: <https://chandra.harvard.edu/photo/openFITS/multiwavelength_data.html>
+The example image `m51_optical_B_small.fits` (and its PNG version, `m51_optical_B_small.png`, also shown in `fits-mode-screenshot.png`) is credited to **NASA/STScI**, and was obtained from the Chandra X-ray Center's Open FITS multiwavelength data page: <https://chandra.harvard.edu/photo/openFITS/multiwavelength_data.html>
