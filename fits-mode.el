@@ -45,6 +45,7 @@
 ;;   j     jump to a given row offset
 ;;   t     toggle ASCII picture / numeric grid (image HDUs)
 ;;   s     cycle the display stretch of the ASCII picture
+;;   + -   zoom the image preview in/out (0 resets)
 ;;
 ;; Requires Python 3 with astropy installed (`pip install astropy').
 
@@ -91,7 +92,8 @@ come close to it."
   :group 'fits-mode)
 
 (defcustom fits-mode-image-grid-size '(40 . 24)
-  "Size, as (ROWS . COLS), of the downsampled preview grid for image HDUs."
+  "Size, as (ROWS . COLS), of the downsampled numeric grid for image HDUs.
+This is the size at zoom 1; \\<fits-data-mode-map>\\[fits-data-zoom-in] and \\[fits-data-zoom-out] scale it."
   :type '(cons integer integer)
   :group 'fits-mode)
 
@@ -117,10 +119,25 @@ support it, try \" ░▒▓█\"."
   :group 'fits-mode)
 
 (defcustom fits-mode-image-ascii-max-size nil
-  "Maximum size, as (COLS . ROWS), of the ASCII image preview.
-nil means fit the preview to the window it is displayed in."
-  :type '(choice (const :tag "Fit window" nil)
+  "Size, as (COLS . ROWS), of the ASCII image preview at zoom 1.
+nil means size it to the window it is displayed in, according to
+`fits-mode-image-ascii-fit'."
+  :type '(choice (const :tag "Size to window" nil)
                  (cons (integer :tag "Columns") (integer :tag "Rows")))
+  :group 'fits-mode)
+
+(defcustom fits-mode-image-ascii-fit 'width
+  "How the ASCII image preview is sized to its window at zoom 1.
+`width' makes it as wide as the window (scroll vertically to see all
+of a tall image); `window' shrinks it so the whole image fits in the
+window without scrolling."
+  :type '(choice (const :tag "Window width" width)
+                 (const :tag "Whole window" window))
+  :group 'fits-mode)
+
+(defcustom fits-mode-image-zoom-step 1.5
+  "Factor by which each zoom key enlarges or shrinks the image preview."
+  :type 'number
   :group 'fits-mode)
 
 (defcustom fits-mode-image-char-aspect 2.0
@@ -433,6 +450,8 @@ to brightness.  Cycle through the choices with
 (defvar-local fits--data-kind nil)   ; 'table or 'image
 (defvar-local fits--data-image-view nil) ; 'ascii or 'table, for image HDUs
 (defvar-local fits--data-stretch nil)    ; current stretch for ASCII view
+(defvar-local fits--data-zoom 1.0)       ; scale factor for image previews
+(defvar-local fits--data-full-res nil)   ; non-nil if ASCII view shows every pixel
 (defvar fits-data-mode-map
   (let ((map (make-sparse-keymap)))
     (set-keymap-parent map tabulated-list-mode-map)
@@ -440,11 +459,18 @@ to brightness.  Cycle through the choices with
     (define-key map "g" #'fits-data-refresh)
     (define-key map "n" #'fits-data-next-page)
     (define-key map "p" #'fits-data-prev-page)
-    (define-key map "j" #'fits-data-jump-to-offset)
-    (define-key map "t" #'fits-data-toggle-image-view)
-    (define-key map "s" #'fits-data-cycle-stretch)
     map)
   "Keymap for `fits-data-mode'.")
+
+;; Bound outside the `defvar' so that re-loading this file in a running
+;; Emacs (where `defvar' keeps the old keymap) still picks up new keys.
+(define-key fits-data-mode-map "j" #'fits-data-jump-to-offset)
+(define-key fits-data-mode-map "t" #'fits-data-toggle-image-view)
+(define-key fits-data-mode-map "s" #'fits-data-cycle-stretch)
+(define-key fits-data-mode-map "+" #'fits-data-zoom-in)
+(define-key fits-data-mode-map "=" #'fits-data-zoom-in)
+(define-key fits-data-mode-map "-" #'fits-data-zoom-out)
+(define-key fits-data-mode-map "0" #'fits-data-zoom-reset)
 
 (defun fits--data-enforce-no-wrap ()
   "Keep the current fits-data buffer in horizontal-scroll mode."
@@ -574,11 +600,23 @@ whose values all look numeric are right-aligned; width is capped at
       (vconcat (nreverse fmt)))))
 
 (defun fits--data-ascii-target-size ()
-  "Return (COLS . ROWS) available for the ASCII image preview."
-  (or fits-mode-image-ascii-max-size
-      (let ((win (or (get-buffer-window) (selected-window))))
-        (cons (max 10 (- (window-body-width win) 2))
-              (max 5 (- (window-body-height win) 1))))))
+  "Return the maximum (COLS . ROWS) for the ASCII image preview.
+This is the zoom-1 size (see `fits-mode-image-ascii-max-size' and
+`fits-mode-image-ascii-fit') scaled by the current zoom factor."
+  (let ((base (or fits-mode-image-ascii-max-size
+                  (let ((win (or (get-buffer-window) (selected-window))))
+                    (cons (max 10 (- (window-body-width win) 2))
+                          (if (eq fits-mode-image-ascii-fit 'window)
+                              ;; Leave room for the key-help line.
+                              (max 5 (- (window-body-height win) 2))
+                            ;; Effectively unlimited: fit width only.
+                            100000))))))
+    (cons (max 1 (round (* (car base) fits--data-zoom)))
+          (max 1 (round (* (cdr base) fits--data-zoom))))))
+
+(defconst fits--data-ascii-help
+  "t: numbers   s: stretch   +/-: zoom   0: reset zoom   g: refresh   q: back"
+  "Key reminder shown above the ASCII image preview.")
 
 (defun fits--data-ascii-char (level)
   "Map an intensity LEVEL (0-255, or nil for NaN) to a ramp character."
@@ -606,15 +644,22 @@ whose values all look numeric are right-aligned; width is capped at
     (setq tabulated-list-format []
           tabulated-list-entries nil)
     (setq header-line-format
-          (format " %s  shape=%s  grid=%s  stretch=%s  clip=[%s, %s]   (t: numbers, s: stretch)"
-                  (fits--current-file-basename)
+          (format " shape=%s  grid=%s  zoom=%sx  stretch=%s  clip=[%s, %s]"
                   (mapconcat #'number-to-string (alist-get 'shape res) "x")
                   (mapconcat #'number-to-string (alist-get 'grid res) "x")
+                  (fits--data-zoom-string)
                   (alist-get 'stretch res)
                   (if (numberp (car clipv)) (format "%.4g" (car clipv)) "-")
                   (if (numberp (cadr clipv)) (format "%.4g" (cadr clipv)) "-")))
+    (setq fits--data-full-res
+          (and levels
+               (let ((grid (alist-get 'grid res))
+                     (plane (alist-get 'plane res)))
+                 (or (>= (car grid) (car plane))
+                     (>= (cadr grid) (cadr plane))))))
     (let ((inhibit-read-only t))
       (erase-buffer)
+      (insert (propertize fits--data-ascii-help 'face 'shadow) "\n")
       (unless levels
         (insert "(this HDU has no image data)\n"))
       (dolist (row levels)
@@ -630,8 +675,10 @@ whose values all look numeric are right-aligned; width is capped at
     (fits--data-load-table)))
 
 (defun fits--data-load-table ()
-  (let* ((grid-rows (car fits-mode-image-grid-size))
-         (grid-cols (cdr fits-mode-image-grid-size))
+  (let* ((grid-rows (max 1 (round (* (car fits-mode-image-grid-size)
+                                         fits--data-zoom))))
+         (grid-cols (max 1 (round (* (cdr fits-mode-image-grid-size)
+                                         fits--data-zoom))))
          (res (fits--call "data" fits--file
                            "--hdu" (number-to-string fits--hdu-index)
                            "--offset" (number-to-string fits--data-offset)
@@ -699,6 +746,39 @@ whose values all look numeric are right-aligned; width is capped at
     (fits--data-load)
     (message "fits-mode: stretch %s" next)))
 
+(defun fits--data-zoom-string ()
+  (let ((z fits--data-zoom))
+    (if (= z (fround z)) (format "%d" (round z)) (format "%.2g" z))))
+
+(defun fits--data-set-zoom (zoom)
+  "Set the image preview zoom factor to ZOOM and redraw."
+  (unless (eq fits--data-kind 'image)
+    (user-error "Zoom only applies to image HDUs"))
+  (setq fits--data-zoom zoom)
+  (fits--data-load)
+  (message "fits-mode: zoom %sx%s" (fits--data-zoom-string)
+           (if (and fits--data-full-res (eq fits--data-image-view 'ascii))
+               " (full resolution)" "")))
+
+(defun fits-data-zoom-in ()
+  "Enlarge the image preview by `fits-mode-image-zoom-step'.
+Scroll with the usual motion and \\[scroll-left]/\\[scroll-right] keys to
+see parts of the image that no longer fit in the window."
+  (interactive)
+  (when (and fits--data-full-res (eq fits--data-image-view 'ascii))
+    (user-error "Already showing the image at full resolution"))
+  (fits--data-set-zoom (* fits--data-zoom fits-mode-image-zoom-step)))
+
+(defun fits-data-zoom-out ()
+  "Shrink the image preview by `fits-mode-image-zoom-step'."
+  (interactive)
+  (fits--data-set-zoom (max 0.05 (/ fits--data-zoom fits-mode-image-zoom-step))))
+
+(defun fits-data-zoom-reset ()
+  "Reset the image preview to its default size."
+  (interactive)
+  (fits--data-set-zoom 1.0))
+
 (defun fits-data-next-page ()
   "Advance to the next page of rows (table HDUs only)."
   (interactive)
@@ -737,7 +817,8 @@ whose values all look numeric are right-aligned; width is capped at
             fits--data-offset 0
             fits--data-kind (if (fits--hdu-is-table-p hdu) 'table 'image)
             fits--data-image-view fits-mode-image-default-view
-            fits--data-stretch fits-mode-image-stretch)
+            fits--data-stretch fits-mode-image-stretch
+            fits--data-zoom 1.0)
       ;; Display first so the ASCII preview can size itself to the window.
       (pop-to-buffer (current-buffer))
       (fits--data-load)
